@@ -1,0 +1,452 @@
+import requests
+import itertools
+import random
+import string
+import time
+import os
+import threading
+import ctypes
+import platform
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from colorama import Fore, Style, init
+
+init(autoreset=True)
+
+# ===================== GLOBAL CONFIG =====================
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+# ===================== DISCORD TOKEN =====================
+# Replace "YOUR_TOKEN_HERE" with your actual Discord token
+DISCORD_TOKEN = "YOUR_TOKEN_HERE"   # ←←← CHANGE THIS BEFORE USING DISCORD MODULE
+
+if platform.system() == "Windows":
+    clear = "cls"
+else:
+    clear = "clear"
+
+# ===================== GUMRS BANNER =====================
+ascii_text = f"""
+{Fore.LIGHTMAGENTA_EX}   ██████╗ ██╗   ██╗███╗   ███╗██████╗ ███████╗
+   ██╔════╝ ██║   ██║████╗ ████║██╔══██╗██╔════╝
+   ██║  ███╗██║   ██║██╔████╔██║██████╔╝███████╗
+   ██║   ██║██║   ██║██║╚██╔╝██║██╔══██╗╚════██║
+   ╚██████╔╝╚██████╔╝██║ ╚═╝ ██║██║  ██║███████║
+    ╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝{Style.RESET_ALL}
+"""
+
+# ===================== PROXY FETCHER =====================
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+    "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/http.txt",
+    "https://raw.githubusercontent.com/proxygenerator1/ProxyGenerator/main/Stable/http.txt",
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?protocol=http&format=text&timeout=10000&country=all&ssl=all&anonymity=all&limit=500",
+]
+
+def fetch_free_proxies():
+    proxies = set()
+    print(f"{Fore.CYAN}Fetching fresh proxies from online sources...{Style.RESET_ALL}")
+    
+    for url in PROXY_SOURCES:
+        try:
+            resp = requests.get(url, timeout=12, headers={"User-Agent": random.choice(USER_AGENTS)})
+            if resp.status_code == 200:
+                new_proxies = [line.strip() for line in resp.text.splitlines() if line.strip() and ':' in line]
+                proxies.update(new_proxies)
+                print(f"{Fore.GREEN}✓ Loaded {len(new_proxies)} from {url.split('//')[1].split('/')[0]}{Style.RESET_ALL}")
+        except Exception:
+            pass
+    
+    proxy_list = list(proxies)
+    random.shuffle(proxy_list)
+    print(f"{Fore.MAGENTA}Total unique proxies fetched: {len(proxy_list)}{Style.RESET_ALL}")
+    return proxy_list
+
+# ===================== GENERATORS =====================
+def generate_combos(length=3, count=None, charset=None):
+    if charset is None:
+        charset = string.ascii_lowercase + string.digits
+    combos = [''.join(p) for p in itertools.product(charset, repeat=length)]
+    if count is not None:
+        random.shuffle(combos)
+        return combos[:count]
+    else:
+        random.shuffle(combos)
+        return combos
+
+def generate_pronounceable(count=5000, length=4):
+    vowels = 'aeiou'
+    cons = 'bcdfghjklmnpqrstvwxyz'
+    return [''.join(random.choice(cons if i % 2 == 0 else vowels) for i in range(length)) for _ in range(count)]
+
+def generate_faces(count=2000):
+    patterns = ["{0}_{1}", "{0}.{1}", "x{0}x", "{0}x{1}"]
+    letters = string.ascii_lowercase
+    return [p.format(random.choice(letters), random.choice(letters)) for p in patterns for _ in range(count//len(patterns))]
+
+def generate_custom(letters_count, numbers_count):
+    letter_chars = string.ascii_lowercase
+    number_chars = string.digits
+    
+    if letters_count > 0 and numbers_count > 0:
+        total_length = letters_count + numbers_count
+        charset = letter_chars + number_chars
+        max_count = 15000
+        return generate_combos(total_length, max_count, charset)
+    elif letters_count > 0:
+        return generate_combos(letters_count, 15000, letter_chars)
+    elif numbers_count > 0:
+        return generate_combos(numbers_count, 10000, number_chars)
+    else:
+        return []
+
+def get_stages():
+    return {
+        "1": ("2 Letter (ALL - 676)", lambda: generate_combos(2, None, string.ascii_lowercase)),
+        "2": ("3 Letter", lambda: generate_combos(3, 12000, string.ascii_lowercase)),
+        "3": ("4 Letter", lambda: generate_combos(4, 15000, string.ascii_lowercase)),
+        "4": ("5 Letter", lambda: generate_combos(5, 10000, string.ascii_lowercase)),
+        "5": ("3 Numbers (ALL)", lambda: generate_combos(3, None, string.digits)),
+        "6": ("4 Numbers", lambda: generate_combos(4, 8000, string.digits)),
+        "7": ("Pronounceable", lambda: generate_pronounceable(8000)),
+        "8": ("Faces (x_x, x.x)", lambda: generate_faces(4000)),
+    }
+
+# ===================== PLATFORM HUNTER ENGINE =====================
+class PlatformHunter:
+    def __init__(self, platform_name):
+        self.platform = platform_name.lower()
+        
+        self.save_path = os.path.join(os.path.expanduser("~"), "Downloads", "available_usernames.txt")
+        os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+        
+        if not os.path.exists(self.save_path):
+            with open(self.save_path, "w", encoding="utf-8") as f:
+                f.write("=== GLOBAL MULTI-PLATFORM UNCLAIMED RESULTS STORAGE ===\n\n")
+
+        self.available_count = 0
+        self.taken_count = 0
+        self.error_count = 0
+        self.total_checked = 0
+        self.lock = threading.Lock()
+        self.proxies = []
+        self.proxy_index = 0
+
+    def update_title(self):
+        if platform.system() == "Windows":
+            try:
+                ctypes.windll.kernel32.SetConsoleTitleW(
+                    f"GUMRS | {self.platform.upper()} | Checked: {self.total_checked} | Avail: {self.available_count} | Taken: {self.taken_count}"
+                )
+            except:
+                pass
+
+    def save_available(self, username):
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        link = self.get_link(username)
+        
+        with open(self.save_path, "a", encoding="utf-8") as f:
+            f.write(f"[{current_time}] [{self.platform.upper()}] @{username:15} | Link: {link}\n")
+
+    def get_link(self, username):
+        links = {
+            "discord": f"https://discord.com/users/{username}",
+            "guns.lol": f"https://guns.lol/{username}",
+            "kick": f"https://kick.com/{username}",
+            "soundcloud": f"https://soundcloud.com/{username}",
+            "twitch": f"https://twitch.tv/{username}",
+            "instagram": f"https://instagram.com/{username}",
+            "tiktok": f"https://tiktok.com/@{username}",
+            "github": f"https://github.com/{username}",
+            "reddit": f"https://reddit.com/user/{username}",
+            "minecraft": f"https://namemc.com/search?q={username}",
+            "youtube": f"https://www.youtube.com/@{username}",
+            "letterboxd": f"https://letterboxd.com/{username}/",
+            "roblox": f"https://www.roblox.com/users/search?keyword={username}"
+        }
+        return links.get(self.platform, f"https://{self.platform}.com/{username}")
+
+    def check_username(self, username, proxy=None):
+        username = username.lower().strip()
+        if not username or len(username) < 2: 
+            return "taken"
+        
+        proxies_dict = {"http": f"http://{proxy}", "https": f"http://{proxy}"} if proxy else None
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+
+        try:
+            if self.platform == "discord":
+                if DISCORD_TOKEN == "YOUR_TOKEN_HERE":
+                    print(f"{Fore.RED}[ERROR] Please set your Discord token first!{Style.RESET_ALL}")
+                    return "error"
+                headers.update({"Authorization": DISCORD_TOKEN, "Content-Type": "application/json"})
+                r = requests.post("https://discord.com/api/v9/users/@me/pomelo", json={"username": username}, headers=headers, proxies=proxies_dict, timeout=7)
+                if r.status_code == 200:
+                    return "available" if r.json().get("taken") is False else "taken"
+                elif r.status_code == 429:
+                    return "rate-limit"
+                return "taken"
+
+            # === Other platforms (unchanged) ===
+            elif self.platform == "guns.lol":
+                r = requests.get(f"https://api.guns.lol/user/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 404 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "kick":
+                r = requests.get(f"https://kick.com/api/v1/channels/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 404 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "soundcloud":
+                r = requests.get(f"https://soundcloud.com/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 404 else "taken"
+
+            elif self.platform == "twitch":
+                r = requests.get(f"https://passport.twitch.tv/usernames/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 204 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "instagram":
+                r = requests.get(f"https://www.instagram.com/{username}/", headers=headers, proxies=proxies_dict, timeout=8)
+                return "available" if r.status_code == 404 else "taken"
+
+            elif self.platform == "tiktok":
+                r = requests.get(f"https://www.tiktok.com/@{username}", headers=headers, proxies=proxies_dict, timeout=8)
+                return "available" if r.status_code == 404 else "taken"
+
+            elif self.platform == "github":
+                r = requests.get(f"https://api.github.com/users/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 404 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "reddit":
+                r = requests.get(f"https://www.reddit.com/user/{username}/about.json", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 404 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "minecraft":
+                r = requests.get(f"https://api.mojang.com/users/profiles/minecraft/{username}", headers=headers, proxies=proxies_dict, timeout=7)
+                return "available" if r.status_code == 204 else "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "youtube":
+                r = requests.get(f"https://www.youtube.com/@{username}", headers=headers, proxies=proxies_dict, timeout=8, allow_redirects=True)
+                if r.status_code == 404 or "This channel does not exist" in r.text or "404" in r.text:
+                    return "available"
+                return "taken" if r.status_code == 200 else "error"
+
+            elif self.platform == "letterboxd":
+                r = requests.get(f"https://letterboxd.com/{username}/", headers=headers, proxies=proxies_dict, timeout=8, allow_redirects=True)
+                text_lower = r.text.lower()
+                if (r.status_code == 404 or any(phrase in text_lower for phrase in ["couldn't find", "page not found", "user not found", "no member found", "this page isn't available"])):
+                    return "available"
+                return "taken" if r.status_code in (200, 302) else "error"
+
+            elif self.platform == "roblox":
+                r = requests.post("https://auth.roblox.com/v1/usernames/validate", json={"usernames": [username], "birthday": "2000-01-01"}, headers=headers, proxies=proxies_dict, timeout=7)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("taken") == [False] or len(data.get("availableUsernames", [])) > 0:
+                        return "available"
+                    else:
+                        return "taken"
+                return "error"
+
+        except Exception:
+            return "error"
+        return "error"
+
+    def process_username(self, username):
+        retries = 3
+        while retries > 0:
+            proxy = None
+            if self.proxies:
+                with self.lock:
+                    proxy = self.proxies[self.proxy_index % len(self.proxies)]
+                    self.proxy_index += 1
+
+            status = self.check_username(username, proxy)
+
+            if status == "rate-limit":
+                time.sleep(2)
+                retries -= 1
+                continue
+            
+            with self.lock:
+                self.total_checked += 1
+                if status == "available":
+                    self.available_count += 1
+                    print(f"{Fore.GREEN}[AVAILABLE] @{username}{Style.RESET_ALL}")
+                    self.save_available(username)
+                elif status == "taken":
+                    self.taken_count += 1
+                    print(f"{Fore.RED}[TAKEN] @{username}{Style.RESET_ALL}")
+                else:
+                    self.error_count += 1
+                    print(f"{Fore.YELLOW}[ERROR/BLOCKED] @{username}{Style.RESET_ALL}")
+                
+                self.update_title()
+            break
+
+    def run(self):
+        os.system(clear)
+        print(ascii_text)
+        print(f"{Fore.MAGENTA}=== {self.platform.upper()} HUNTER ENGINE ==={Style.RESET_ALL}")
+        
+        use_proxies = input(f"{Fore.CYAN}Enable Free Dynamic Proxies? (y/n): {Style.RESET_ALL}").strip().lower() == 'y'
+        if use_proxies:
+            self.proxies = fetch_free_proxies()
+
+        print("\nSelect Username Sequence Pattern:")
+        stages = get_stages()
+        for k, v in stages.items():
+            print(f"  {k}. {v[0]}")
+        print("   9. Custom Length Generator")
+        print("  10. Specific Username Checker")
+        print("  11. Username Monitor (Live)")
+
+        stage_choice = input(f"\n{Fore.CYAN}Select option number: {Style.RESET_ALL}").strip()
+        
+        if stage_choice == "9":
+            while True:
+                try:
+                    letters = input(f"{Fore.CYAN}Number of letters (1-9): {Style.RESET_ALL}").strip()
+                    letters_count = int(letters)
+                    if 1 <= letters_count <= 9:
+                        break
+                    print(f"{Fore.RED}Please enter a number between 1 and 9.{Style.RESET_ALL}")
+                except ValueError:
+                    print(f"{Fore.RED}Invalid number.{Style.RESET_ALL}")
+            
+            numbers_input = input(f"{Fore.CYAN}Number of numbers (or 'n' to skip): {Style.RESET_ALL}").strip().lower()
+            numbers_count = 0
+            if numbers_input != 'n':
+                try:
+                    numbers_count = int(numbers_input)
+                except ValueError:
+                    numbers_count = 0
+            
+            usernames = generate_custom(letters_count, numbers_count)
+            print(f"{Fore.GREEN}✓ Generated {len(usernames)} custom usernames.{Style.RESET_ALL}")
+            
+        elif stage_choice == "10":
+            username = input(f"{Fore.CYAN}Enter username to check: {Style.RESET_ALL}").strip()
+            if username:
+                print(f"{Fore.CYAN}Checking @{username}...{Style.RESET_ALL}")
+                status = self.check_username(username)
+                if status == "available":
+                    print(f"{Fore.GREEN}[AVAILABLE] @{username}{Style.RESET_ALL}")
+                    self.save_available(username)
+                elif status == "taken":
+                    print(f"{Fore.RED}[TAKEN] @{username}{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}[ERROR] @{username}{Style.RESET_ALL}")
+            input("\nPress Enter to continue...")
+            return
+        elif stage_choice == "11":
+            self.run_monitor()
+            return
+        elif stage_choice in stages:
+            usernames = stages[stage_choice][1]()
+        else:
+            print(f"{Fore.RED}Invalid option selected.{Style.RESET_ALL}")
+            time.sleep(1.5)
+            return
+
+        if stage_choice not in ["10", "11"]:
+            threads = int(input(f"{Fore.CYAN}Threads count (Recommended 10-60): {Style.RESET_ALL}") or "25")
+            print(f"\n{Fore.GREEN}✓ Loaded {len(usernames)} usernames. Starting check...{Style.RESET_ALL}")
+            time.sleep(1.5)
+
+            with ThreadPoolExecutor(max_workers=threads) as executor:
+                executor.map(self.process_username, usernames)
+
+            print(f"\n{Fore.GREEN}Stage completed! Total checked: {self.total_checked}{Style.RESET_ALL}")
+            input("\nPress Enter to return to main menu...")
+
+    def run_monitor(self):
+        print(f"\n{Fore.CYAN}=== Username Monitor Mode ==={Style.RESET_ALL}")
+        monitored = []
+        
+        while len(monitored) < 10:
+            username = input(f"{Fore.CYAN}Enter username to monitor (or 'done' to finish): {Style.RESET_ALL}").strip()
+            if username.lower() == 'done':
+                break
+            if username:
+                monitored.append(username.lower())
+                print(f"{Fore.GREEN}Added @{username} to monitoring list.{Style.RESET_ALL}")
+        
+        if not monitored:
+            print("No usernames added.")
+            input("Press Enter to continue...")
+            return
+        
+        print("\nSelect check interval:")
+        intervals = {"1": (3600, "1 hour"), "2": (21600, "6 hours"), "3": (43200, "12 hours"), "4": (86400, "24 hours")}
+        for k, v in intervals.items():
+            print(f"  {k}. {v[1]}")
+        
+        choice = input(f"\n{Fore.CYAN}Select interval: {Style.RESET_ALL}").strip()
+        interval_seconds = intervals.get(choice, (3600, "1 hour"))[0]
+        
+        print(f"{Fore.MAGENTA}Monitoring {len(monitored)} username(s) every {interval_seconds//3600} hours...{Style.RESET_ALL}")
+        print("Press Ctrl+C to stop.\n")
+        
+        try:
+            while True:
+                for username in monitored:
+                    status = self.check_username(username)
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    if status == "available":
+                        print(f"{Fore.GREEN}[{current_time}] [AVAILABLE] @{username}{Style.RESET_ALL}")
+                        self.save_available(username)
+                    elif status == "taken":
+                        print(f"{Fore.RED}[{current_time}] [TAKEN] @{username}{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.YELLOW}[{current_time}] [ERROR] @{username}{Style.RESET_ALL}")
+                time.sleep(interval_seconds)
+        except KeyboardInterrupt:
+            print(f"\n{Fore.YELLOW}Monitor stopped.{Style.RESET_ALL}")
+
+# ===================== MAIN INTERFACE =====================
+def main():
+    options = ["discord", "guns.lol", "kick", "soundcloud", "twitch", "instagram", "tiktok", "github", "reddit", "minecraft", "youtube", "letterboxd", "roblox"]
+    
+    while True:
+        os.system(clear)
+        print(ascii_text)
+        print(f"{Fore.MAGENTA}  === GUMRS UNIVERSAL USERNAME HUNTER v3.4 ==={Style.RESET_ALL}")
+        print(f"  {Fore.CYAN}Auto-saving hits to: ~/Downloads/available_usernames.txt{Style.RESET_ALL}\n")
+        
+        print("  Available Platforms:")
+        for i, platform_item in enumerate(options, 1):
+            name_format = platform_item.replace('-', ' ').title()
+            print(f"    {Fore.WHITE}[{Fore.CYAN}{i:02d}{Fore.WHITE}] {name_format}")
+            
+        choice = input(f"\n  {Fore.CYAN}Select platform (or 'q' to exit): {Style.RESET_ALL}").strip().lower()
+        if choice == 'q': 
+            break
+        
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(options):
+                selected = options[idx]
+                hunter = PlatformHunter(selected)
+                hunter.run()
+            else:
+                print(f"{Fore.RED}Invalid selection.{Style.RESET_ALL}")
+                time.sleep(1.5)
+        except ValueError:
+            print(f"{Fore.RED}Please enter a valid number.{Style.RESET_ALL}")
+            time.sleep(1.5)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n{Fore.YELLOW}Goodbye!{Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+    
+    input(f"\n{Fore.WHITE}Press Enter to exit...")
